@@ -43,10 +43,14 @@ func TestApplicationServiceCreate(t *testing.T) {
 	repository := &fakeApplicationRepository{}
 	applicationService := NewApplicationService(repository)
 
+	appliedAt := "  2026-10-06  "
+
 	created, err := applicationService.Create(ctx, model.CreateApplicationRequest{
-		Company:  "  ByteDance  ",
-		Position: "  Backend Intern  ",
-		Status:   "  INTERVIEW  ",
+		Company:   "  ByteDance  ",
+		Position:  "  Backend Intern  ",
+		Status:    "  INTERVIEW  ",
+		AppliedAt: &appliedAt,
+		Notes:     "  官网日常实习  ",
 	})
 
 	if err != nil {
@@ -68,10 +72,30 @@ func TestApplicationServiceCreate(t *testing.T) {
 	if created.Status != "interview" {
 		t.Fatalf("expected normalized status, got %q", created.Status)
 	}
+	if created.AppliedAt == nil {
+		t.Fatal("expected applied_at, got nil")
+	}
+
+	if *created.AppliedAt != "2026-10-06" {
+		t.Fatalf(
+			"expected applied_at %q, got %q",
+			"2026-10-06",
+			*created.AppliedAt,
+		)
+	}
+	if created.Notes != "官网日常实习" {
+		t.Fatalf(
+			"expected notes %q, got %q",
+			"官网日常实习",
+			created.Notes,
+		)
+	}
 }
 
 func TestApplicationServiceCreateValidation(t *testing.T) {
 	ctx := context.Background()
+
+	invalidAppliedAt := "2026-02-30"
 
 	tests := []struct {
 		name    string
@@ -113,6 +137,27 @@ func TestApplicationServiceCreateValidation(t *testing.T) {
 				Status:   "unknown",
 			},
 			wantErr: ErrInvalidStatus,
+		},
+		{
+			name: "invalid applied_at",
+			request: model.CreateApplicationRequest{
+				Company:   "ByteDance",
+				Position:  "Backend Intern",
+				Status:    "planned",
+				AppliedAt: &invalidAppliedAt,
+			},
+			wantErr: ErrInvalidAppliedAt,
+		},
+
+		{
+			name: "notes too long",
+			request: model.CreateApplicationRequest{
+				Company:  "ByteDance",
+				Position: "Backend Intern",
+				Status:   "planned",
+				Notes:    strings.Repeat("中", 1001),
+			},
+			wantErr: ErrNotesTooLong,
 		},
 	}
 

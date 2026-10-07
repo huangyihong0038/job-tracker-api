@@ -162,7 +162,10 @@ func isValidationError(err error) bool {
 		errors.Is(err, service.ErrCompanyTooLong) ||
 		errors.Is(err, service.ErrPositionRequired) ||
 		errors.Is(err, service.ErrPositionTooLong) ||
-		errors.Is(err, service.ErrInvalidStatus)
+		errors.Is(err, service.ErrInvalidStatus) ||
+		errors.Is(err, service.ErrInvalidAppliedAt) ||
+		errors.Is(err, service.ErrNotesTooLong)
+
 }
 
 func writeError(

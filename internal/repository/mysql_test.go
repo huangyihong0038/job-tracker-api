@@ -23,14 +23,45 @@ func TestMySQLApplicationRepositoryLifecycle(t *testing.T) {
 	defer db.Close()
 
 	repo := NewMySQLApplicationRepository(db)
+	appliedAt := "2026-10-07"
 
 	created, err := repo.Create(ctx, model.Application{
-		Company:  "Test Company",
-		Position: "Backend Intern",
-		Status:   "planned",
+		Company:   "Test Company",
+		Position:  "Backend Intern",
+		Status:    "planned",
+		AppliedAt: &appliedAt,
+		Notes:     "Created by MySQL repository integration test",
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
+	}
+
+	if created.ID <= 0 {
+		t.Fatalf("expected a positive ID, got %d", created.ID)
+	}
+
+	if created.AppliedAt == nil {
+		t.Fatal("expected applied_at, got nil")
+	}
+
+	if *created.AppliedAt != appliedAt {
+		t.Fatalf(
+			"expected applied_at %q, got %q",
+			appliedAt,
+			*created.AppliedAt,
+		)
+	}
+
+	if created.Notes != "Created by MySQL repository integration test" {
+		t.Fatalf("unexpected notes: %q", created.Notes)
+	}
+
+	if created.CreatedAt.IsZero() {
+		t.Fatal("expected created_at to be set")
+	}
+
+	if created.UpdatedAt.IsZero() {
+		t.Fatal("expected updated_at to be set")
 	}
 
 	// 即使后面的断言失败，也清理这条测试数据。
@@ -40,8 +71,56 @@ func TestMySQLApplicationRepositoryLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get by ID: %v", err)
 	}
-	if got.Company != created.Company || got.Status != created.Status {
-		t.Fatalf("unexpected application: %+v", got)
+	if got.Company != created.Company {
+		t.Fatalf(
+			"expected company %q, got %q",
+			created.Company,
+			got.Company,
+		)
+	}
+
+	if got.Position != created.Position {
+		t.Fatalf(
+			"expected position %q, got %q",
+			created.Position,
+			got.Position,
+		)
+	}
+
+	if got.Status != created.Status {
+		t.Fatalf(
+			"expected status %q, got %q",
+			created.Status,
+			got.Status,
+		)
+	}
+
+	if got.AppliedAt == nil {
+		t.Fatal("expected retrieved applied_at, got nil")
+	}
+
+	if *got.AppliedAt != appliedAt {
+		t.Fatalf(
+			"expected retrieved applied_at %q, got %q",
+			appliedAt,
+			*got.AppliedAt,
+		)
+	}
+
+	if got.Notes != created.Notes {
+		t.Fatalf(
+			"expected notes %q, got %q",
+			created.Notes,
+			got.Notes,
+		)
+	}
+
+	if got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {
+		t.Fatalf(
+			"expected database timestamps, got created_at=%v updated_at=%v",
+			got.CreatedAt,
+			got.UpdatedAt,
+		)
 	}
 
 	if err := repo.Delete(ctx, created.ID); err != nil {
@@ -51,5 +130,86 @@ func TestMySQLApplicationRepositoryLifecycle(t *testing.T) {
 	_, err = repo.GetByID(ctx, created.ID)
 	if !errors.Is(err, ErrApplicationNotFound) {
 		t.Fatalf("expected ErrApplicationNotFound after delete, got %v", err)
+	}
+}
+
+func TestMySQLApplicationRepositoryNullAppliedAt(t *testing.T) {
+	if os.Getenv("MYSQL_DSN") == "" {
+		t.Skip("MYSQL_DSN is not set")
+	}
+
+	ctx := context.Background()
+
+	db, err := config.OpenMySQL(ctx)
+	if err != nil {
+		t.Fatalf("connect to MySQL: %v", err)
+	}
+	defer db.Close()
+
+	repo := NewMySQLApplicationRepository(db)
+
+	created, err := repo.Create(ctx, model.Application{
+		Company:  "Null Date Test Company",
+		Position: "Backend Intern",
+		Status:   "planned",
+		Notes:    "",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// 即使后续断言失败，也删除测试数据。
+	defer db.ExecContext(
+		ctx,
+		"DELETE FROM applications WHERE id = ?",
+		created.ID,
+	)
+
+	if created.ID <= 0 {
+		t.Fatalf(
+			"expected a positive ID, got %d",
+			created.ID,
+		)
+	}
+
+	if created.AppliedAt != nil {
+		t.Fatalf(
+			"expected nil applied_at, got %q",
+			*created.AppliedAt,
+		)
+	}
+
+	if created.Notes != "" {
+		t.Fatalf(
+			"expected empty notes, got %q",
+			created.Notes,
+		)
+	}
+
+	got, err := repo.GetByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get by ID: %v", err)
+	}
+
+	if got.AppliedAt != nil {
+		t.Fatalf(
+			"expected retrieved applied_at to be nil, got %q",
+			*got.AppliedAt,
+		)
+	}
+
+	if got.Notes != "" {
+		t.Fatalf(
+			"expected retrieved notes to be empty, got %q",
+			got.Notes,
+		)
+	}
+
+	if got.CreatedAt.IsZero() {
+		t.Fatal("expected created_at to be set")
+	}
+
+	if got.UpdatedAt.IsZero() {
+		t.Fatal("expected updated_at to be set")
 	}
 }

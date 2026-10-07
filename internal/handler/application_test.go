@@ -198,48 +198,71 @@ func TestApplicationHandlerCreateSuccess(t *testing.T) {
 }
 
 func TestApplicationHandlerCreateValidationError(t *testing.T) {
-	applicationService := &fakeApplicationService{
-		createFunc: func(
-			request model.CreateApplicationRequest,
-		) (model.Application, error) {
-			return model.Application{}, service.ErrInvalidStatus
+
+	tests := []struct {
+		name       string
+		serviceErr error
+	}{
+		{
+			name:       "invalid applied_at",
+			serviceErr: service.ErrInvalidAppliedAt,
+		},
+		{
+			name:       "notes too long",
+			serviceErr: service.ErrNotesTooLong,
 		},
 	}
 
-	router := newTestRouter(applicationService)
+	for _, test := range tests {
 
-	responseRecorder := performCreateRequest(
-		router,
-		`{
-			"company": "ByteDance",
-			"position": "Backend Intern",
-			"status": "unknown"
-		}`,
-	)
+		t.Run(test.name, func(t *testing.T) {
+			applicationService := &fakeApplicationService{
+				createFunc: func(
+					request model.CreateApplicationRequest,
+				) (model.Application, error) {
+					return model.Application{}, test.serviceErr
+				},
+			}
 
-	if responseRecorder.Code != http.StatusBadRequest {
-		t.Fatalf(
-			"expected status %d, got %d; body: %s",
-			http.StatusBadRequest,
-			responseRecorder.Code,
-			responseRecorder.Body.String(),
-		)
-	}
+			router := newTestRouter(applicationService)
 
-	body := responseRecorder.Body.String()
+			responseRecorder := performCreateRequest(
+				router,
+				`{
+				"company": "ByteDance",
+				"position": "Backend Intern",
+				"status": "planned"
+			}`,
+			)
 
-	if !strings.Contains(body, `"code":"INVALID_ARGUMENT"`) {
-		t.Fatalf(
-			"expected INVALID_ARGUMENT, got: %s",
-			body,
-		)
-	}
+			if responseRecorder.Code != http.StatusBadRequest {
+				t.Fatalf(
+					"expected status %d, got %d; body: %s",
+					http.StatusBadRequest,
+					responseRecorder.Code,
+					responseRecorder.Body.String(),
+				)
+			}
 
-	if !strings.Contains(body, `"message":"invalid status"`) {
-		t.Fatalf(
-			"expected invalid status message, got: %s",
-			body,
-		)
+			body := responseRecorder.Body.String()
+
+			if !strings.Contains(body, `"code":"INVALID_ARGUMENT"`) {
+				t.Fatalf(
+					"expected INVALID_ARGUMENT, got: %s",
+					body,
+				)
+			}
+
+			if !strings.Contains(body, test.serviceErr.Error()) {
+				t.Fatalf(
+					"expected message %q, got: %s",
+					test.serviceErr.Error(),
+					body,
+				)
+			}
+
+		})
+
 	}
 }
 
