@@ -19,12 +19,22 @@ var (
 	ErrApplicationNotFound = errors.New("application not found")
 	ErrInvalidAppliedAt    = errors.New("applied_at must be in YYYY-MM-DD format")
 	ErrNotesTooLong        = errors.New("notes is too long")
+	ErrInvalidPage         = errors.New(
+		"page must be greater than or equal to 1",
+	)
+	ErrInvalidPageSize = errors.New(
+		"page_size must be between 1 and 100",
+	)
 )
 
 type ApplicationRepository interface {
 	Create(context.Context, model.Application) (model.Application, error)
 	GetByID(context.Context, int64) (model.Application, error)
 	Delete(context.Context, int64) error
+	List(
+		context.Context,
+		model.ListApplicationsRequest,
+	) ([]model.Application, int64, error)
 }
 
 type ApplicationService struct {
@@ -110,6 +120,57 @@ func (service *ApplicationService) Create(
 	}
 
 	return service.repository.Create(ctx, application)
+}
+
+func (service *ApplicationService) List(
+	ctx context.Context,
+	request model.ListApplicationsRequest,
+) (model.ListApplicationsResponse, error) {
+	request.Status = strings.ToLower(
+		strings.TrimSpace(request.Status),
+	)
+	request.Company = strings.TrimSpace(
+		request.Company,
+	)
+
+	if request.Page < 1 {
+		return model.ListApplicationsResponse{},
+			ErrInvalidPage
+	}
+
+	if request.PageSize < 1 ||
+		request.PageSize > 100 {
+		return model.ListApplicationsResponse{},
+			ErrInvalidPageSize
+	}
+
+	if request.Status != "" {
+		if err := ValidStatus(request.Status); err != nil {
+			return model.ListApplicationsResponse{},
+				ErrInvalidStatus
+		}
+	}
+
+	applications, total, err :=
+		service.repository.List(ctx, request)
+	if err != nil {
+		return model.ListApplicationsResponse{}, err
+	}
+
+	if applications == nil {
+		applications = []model.Application{}
+	}
+
+	response := model.ListApplicationsResponse{
+		Data: applications,
+		Pagination: model.Pagination{
+			Page:     request.Page,
+			PageSize: request.PageSize,
+			Total:    total,
+		},
+	}
+
+	return response, nil
 }
 
 func (service *ApplicationService) GetByID(

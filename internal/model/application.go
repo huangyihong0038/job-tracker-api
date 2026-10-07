@@ -20,3 +20,21 @@ type CreateApplicationRequest struct {
 	AppliedAt *string `json:"applied_at"`
 	Notes     string  `json:"notes"`
 }
+
+type ListApplicationsRequest struct {
+	Page     int    `form:"page"`
+	PageSize int    `form:"page_size"`
+	Status   string `form:"status"`
+	Company  string `form:"company"`
+}
+
+type Pagination struct {
+	Page     int   `json:"page"`
+	PageSize int   `json:"page_size"`
+	Total    int64 `json:"total"`
+}
+
+type ListApplicationsResponse struct {
+	Data       []Application `json:"data"`
+	Pagination Pagination    `json:"pagination"`
+}

@@ -47,7 +47,15 @@ func main() {
 			applicationHandler.GetByID,
 		)
 
-		api.DELETE("/applications/:id", applicationHandler.Delete)
+		api.DELETE(
+			"/applications/:id",
+			applicationHandler.Delete,
+		)
+
+		api.GET(
+			"/applications",
+			applicationHandler.List,
+		)
 	}
 
 	if err := router.Run(":8080"); err != nil {

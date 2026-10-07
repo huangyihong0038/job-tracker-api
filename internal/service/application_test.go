@@ -11,6 +11,10 @@ import (
 
 type fakeApplicationRepository struct {
 	created model.Application
+
+	listFunc func(
+		model.ListApplicationsRequest,
+	) ([]model.Application, int64, error)
 }
 
 func (repository *fakeApplicationRepository) Create(
@@ -34,6 +38,17 @@ func (repository *fakeApplicationRepository) Delete(
 	id int64,
 ) error {
 	return nil
+}
+
+func (repository *fakeApplicationRepository) List(
+	_ context.Context,
+	request model.ListApplicationsRequest,
+) ([]model.Application, int64, error) {
+	if repository.listFunc != nil {
+		return repository.listFunc(request)
+	}
+
+	return []model.Application{}, 0, nil
 }
 
 func TestApplicationServiceCreate(t *testing.T) {
@@ -190,5 +205,268 @@ func TestApplicationServiceDeleteNotFound(t *testing.T) {
 
 	if !errors.Is(err, ErrApplicationNotFound) {
 		t.Fatalf("expected ErrApplicationNotFound, got %v", err)
+	}
+}
+
+func TestApplicationServiceList(t *testing.T) {
+	ctx := context.Background()
+
+	repository := &fakeApplicationRepository{
+		listFunc: func(
+			request model.ListApplicationsRequest,
+		) ([]model.Application, int64, error) {
+			if request.Page != 2 {
+				t.Fatalf(
+					"expected page 2, got %d",
+					request.Page,
+				)
+			}
+
+			if request.PageSize != 10 {
+				t.Fatalf(
+					"expected page size 10, got %d",
+					request.PageSize,
+				)
+			}
+
+			if request.Status != "interview" {
+				t.Fatalf(
+					"expected normalized status interview, got %q",
+					request.Status,
+				)
+			}
+
+			if request.Company != "Byte" {
+				t.Fatalf(
+					"expected trimmed company Byte, got %q",
+					request.Company,
+				)
+			}
+
+			return []model.Application{
+				{
+					ID:      2,
+					Company: "ByteDance",
+					Status:  "interview",
+				},
+				{
+					ID:      1,
+					Company: "ByteDance",
+					Status:  "interview",
+				},
+			}, 25, nil
+		},
+	}
+
+	applicationService :=
+		NewApplicationService(repository)
+
+	response, err := applicationService.List(
+		ctx,
+		model.ListApplicationsRequest{
+			Page:     2,
+			PageSize: 10,
+			Status:   "  INTERVIEW  ",
+			Company:  "  Byte  ",
+		},
+	)
+	if err != nil {
+		t.Fatalf(
+			"expected list to succeed, got: %v",
+			err,
+		)
+	}
+
+	if len(response.Data) != 2 {
+		t.Fatalf(
+			"expected 2 applications, got %d",
+			len(response.Data),
+		)
+	}
+
+	if response.Data[0].ID != 2 ||
+		response.Data[1].ID != 1 {
+		t.Fatalf(
+			"unexpected application order: %+v",
+			response.Data,
+		)
+	}
+
+	if response.Pagination.Page != 2 {
+		t.Fatalf(
+			"expected page 2, got %d",
+			response.Pagination.Page,
+		)
+	}
+
+	if response.Pagination.PageSize != 10 {
+		t.Fatalf(
+			"expected page size 10, got %d",
+			response.Pagination.PageSize,
+		)
+	}
+
+	if response.Pagination.Total != 25 {
+		t.Fatalf(
+			"expected total 25, got %d",
+			response.Pagination.Total,
+		)
+	}
+}
+
+func TestApplicationServiceListValidation(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name    string
+		request model.ListApplicationsRequest
+		wantErr error
+	}{
+		{
+			name: "page is zero",
+			request: model.ListApplicationsRequest{
+				Page:     0,
+				PageSize: 20,
+			},
+			wantErr: ErrInvalidPage,
+		},
+		{
+			name: "page size is zero",
+			request: model.ListApplicationsRequest{
+				Page:     1,
+				PageSize: 0,
+			},
+			wantErr: ErrInvalidPageSize,
+		},
+		{
+			name: "page size exceeds maximum",
+			request: model.ListApplicationsRequest{
+				Page:     1,
+				PageSize: 101,
+			},
+			wantErr: ErrInvalidPageSize,
+		},
+		{
+			name: "invalid status",
+			request: model.ListApplicationsRequest{
+				Page:     1,
+				PageSize: 20,
+				Status:   "unknown",
+			},
+			wantErr: ErrInvalidStatus,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repositoryCalled := false
+
+			repository := &fakeApplicationRepository{
+				listFunc: func(
+					request model.ListApplicationsRequest,
+				) ([]model.Application, int64, error) {
+					repositoryCalled = true
+					return nil, 0, nil
+				},
+			}
+
+			applicationService :=
+				NewApplicationService(repository)
+
+			_, err := applicationService.List(
+				ctx,
+				test.request,
+			)
+
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf(
+					"expected error %v, got %v",
+					test.wantErr,
+					err,
+				)
+			}
+
+			if repositoryCalled {
+				t.Fatal(
+					"repository should not be called for invalid request",
+				)
+			}
+		})
+	}
+}
+
+func TestApplicationServiceListRepositoryError(t *testing.T) {
+	ctx := context.Background()
+
+	repositoryError :=
+		errors.New("database connection failed")
+
+	repository := &fakeApplicationRepository{
+		listFunc: func(
+			request model.ListApplicationsRequest,
+		) ([]model.Application, int64, error) {
+			return nil, 0, repositoryError
+		},
+	}
+
+	applicationService :=
+		NewApplicationService(repository)
+
+	_, err := applicationService.List(
+		ctx,
+		model.ListApplicationsRequest{
+			Page:     1,
+			PageSize: 20,
+		},
+	)
+
+	if !errors.Is(err, repositoryError) {
+		t.Fatalf(
+			"expected repository error %v, got %v",
+			repositoryError,
+			err,
+		)
+	}
+}
+
+func TestApplicationServiceListNormalizesNilData(t *testing.T) {
+	ctx := context.Background()
+
+	repository := &fakeApplicationRepository{
+		listFunc: func(
+			request model.ListApplicationsRequest,
+		) ([]model.Application, int64, error) {
+			return nil, 0, nil
+		},
+	}
+
+	applicationService :=
+		NewApplicationService(repository)
+
+	response, err := applicationService.List(
+		ctx,
+		model.ListApplicationsRequest{
+			Page:     1,
+			PageSize: 20,
+		},
+	)
+	if err != nil {
+		t.Fatalf(
+			"expected list to succeed, got: %v",
+			err,
+		)
+	}
+
+	if response.Data == nil {
+		t.Fatal(
+			"expected empty non-nil data slice",
+		)
+	}
+
+	if len(response.Data) != 0 {
+		t.Fatalf(
+			"expected empty data, got %+v",
+			response.Data,
+		)
 	}
 }

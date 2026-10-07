@@ -21,6 +21,9 @@ type fakeApplicationService struct {
 	createFunc  func(model.CreateApplicationRequest) (model.Application, error)
 	getByIDFunc func(int64) (model.Application, error)
 	deleteFunc  func(int64) error
+	listFunc    func(
+		model.ListApplicationsRequest,
+	) (model.ListApplicationsResponse, error)
 }
 
 func (service *fakeApplicationService) Create(
@@ -28,6 +31,24 @@ func (service *fakeApplicationService) Create(
 	request model.CreateApplicationRequest,
 ) (model.Application, error) {
 	return service.createFunc(request)
+}
+
+func (service *fakeApplicationService) List(
+	_ context.Context,
+	request model.ListApplicationsRequest,
+) (model.ListApplicationsResponse, error) {
+	if service.listFunc != nil {
+		return service.listFunc(request)
+	}
+
+	return model.ListApplicationsResponse{
+		Data: []model.Application{},
+		Pagination: model.Pagination{
+			Page:     request.Page,
+			PageSize: request.PageSize,
+			Total:    0,
+		},
+	}, nil
 }
 
 func (service *fakeApplicationService) GetByID(
@@ -69,6 +90,12 @@ func newTestRouter(
 		"/api/v1/applications/:id",
 		applicationHandler.Delete,
 	)
+
+	router.GET(
+		"/api/v1/applications",
+		applicationHandler.List,
+	)
+
 	return router
 }
 
@@ -609,4 +636,302 @@ func TestApplicationLifecycle(t *testing.T) {
 		t.Fatalf("after delete, want 404, got %d", response.Code)
 	}
 
+}
+
+func TestApplicationHandlerListSuccess(t *testing.T) {
+	tests := []struct {
+		name        string
+		path        string
+		wantRequest model.ListApplicationsRequest
+	}{
+		{
+			name: "default pagination",
+			path: "/api/v1/applications",
+			wantRequest: model.ListApplicationsRequest{
+				Page:     1,
+				PageSize: 20,
+			},
+		},
+		{
+			name: "explicit query parameters",
+			path: "/api/v1/applications" +
+				"?page=2" +
+				"&page_size=10" +
+				"&status=interview" +
+				"&company=Byte",
+			wantRequest: model.ListApplicationsRequest{
+				Page:     2,
+				PageSize: 10,
+				Status:   "interview",
+				Company:  "Byte",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			applicationService :=
+				&fakeApplicationService{
+					listFunc: func(
+						request model.ListApplicationsRequest,
+					) (
+						model.ListApplicationsResponse,
+						error,
+					) {
+						if request != test.wantRequest {
+							t.Fatalf(
+								"expected request %+v, got %+v",
+								test.wantRequest,
+								request,
+							)
+						}
+
+						return model.ListApplicationsResponse{
+							Data: []model.Application{
+								{
+									ID:      1,
+									Company: "ByteDance",
+									Status:  "interview",
+								},
+							},
+							Pagination: model.Pagination{
+								Page:     request.Page,
+								PageSize: request.PageSize,
+								Total:    1,
+							},
+						}, nil
+					},
+				}
+
+			router := newTestRouter(
+				applicationService,
+			)
+
+			request := httptest.NewRequest(
+				http.MethodGet,
+				test.path,
+				nil,
+			)
+			responseRecorder :=
+				httptest.NewRecorder()
+
+			router.ServeHTTP(
+				responseRecorder,
+				request,
+			)
+
+			if responseRecorder.Code != http.StatusOK {
+				t.Fatalf(
+					"expected status %d, got %d; body: %s",
+					http.StatusOK,
+					responseRecorder.Code,
+					responseRecorder.Body.String(),
+				)
+			}
+
+			var response model.ListApplicationsResponse
+
+			if err := json.Unmarshal(
+				responseRecorder.Body.Bytes(),
+				&response,
+			); err != nil {
+				t.Fatalf(
+					"decode response: %v",
+					err,
+				)
+			}
+
+			if len(response.Data) != 1 {
+				t.Fatalf(
+					"expected one application, got %d",
+					len(response.Data),
+				)
+			}
+
+			if response.Data[0].ID != 1 {
+				t.Fatalf(
+					"expected application ID 1, got %d",
+					response.Data[0].ID,
+				)
+			}
+
+			if response.Pagination.Page !=
+				test.wantRequest.Page {
+				t.Fatalf(
+					"expected page %d, got %d",
+					test.wantRequest.Page,
+					response.Pagination.Page,
+				)
+			}
+
+			if response.Pagination.PageSize !=
+				test.wantRequest.PageSize {
+				t.Fatalf(
+					"expected page size %d, got %d",
+					test.wantRequest.PageSize,
+					response.Pagination.PageSize,
+				)
+			}
+
+			if response.Pagination.Total != 1 {
+				t.Fatalf(
+					"expected total 1, got %d",
+					response.Pagination.Total,
+				)
+			}
+		})
+	}
+}
+
+func TestApplicationHandlerListErrors(t *testing.T) {
+	internalError :=
+		errors.New("database connection failed")
+
+	tests := []struct {
+		name              string
+		path              string
+		serviceErr        error
+		wantStatus        int
+		wantCode          string
+		wantMessage       string
+		wantServiceCalled bool
+		forbiddenMessage  string
+	}{
+		{
+			name:        "query parameter is not an integer",
+			path:        "/api/v1/applications?page=abc",
+			wantStatus:  http.StatusBadRequest,
+			wantCode:    "INVALID_ARGUMENT",
+			wantMessage: "request query is invalid",
+		},
+		{
+			name: "invalid page",
+			path: "/api/v1/applications" +
+				"?page=0&page_size=20",
+			serviceErr:        service.ErrInvalidPage,
+			wantStatus:        http.StatusBadRequest,
+			wantCode:          "INVALID_ARGUMENT",
+			wantMessage:       service.ErrInvalidPage.Error(),
+			wantServiceCalled: true,
+		},
+		{
+			name: "invalid page size",
+			path: "/api/v1/applications" +
+				"?page=1&page_size=101",
+			serviceErr:        service.ErrInvalidPageSize,
+			wantStatus:        http.StatusBadRequest,
+			wantCode:          "INVALID_ARGUMENT",
+			wantMessage:       service.ErrInvalidPageSize.Error(),
+			wantServiceCalled: true,
+		},
+		{
+			name: "invalid status",
+			path: "/api/v1/applications" +
+				"?page=1&page_size=20&status=unknown",
+			serviceErr:        service.ErrInvalidStatus,
+			wantStatus:        http.StatusBadRequest,
+			wantCode:          "INVALID_ARGUMENT",
+			wantMessage:       service.ErrInvalidStatus.Error(),
+			wantServiceCalled: true,
+		},
+		{
+			name:              "internal error",
+			path:              "/api/v1/applications",
+			serviceErr:        internalError,
+			wantStatus:        http.StatusInternalServerError,
+			wantCode:          "INTERNAL_ERROR",
+			wantMessage:       "internal server error",
+			wantServiceCalled: true,
+			forbiddenMessage:  internalError.Error(),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			serviceCalled := false
+
+			applicationService :=
+				&fakeApplicationService{
+					listFunc: func(
+						request model.ListApplicationsRequest,
+					) (
+						model.ListApplicationsResponse,
+						error,
+					) {
+						serviceCalled = true
+						return model.ListApplicationsResponse{},
+							test.serviceErr
+					},
+				}
+
+			router := newTestRouter(
+				applicationService,
+			)
+
+			request := httptest.NewRequest(
+				http.MethodGet,
+				test.path,
+				nil,
+			)
+			responseRecorder :=
+				httptest.NewRecorder()
+
+			router.ServeHTTP(
+				responseRecorder,
+				request,
+			)
+
+			if responseRecorder.Code != test.wantStatus {
+				t.Fatalf(
+					"expected status %d, got %d; body: %s",
+					test.wantStatus,
+					responseRecorder.Code,
+					responseRecorder.Body.String(),
+				)
+			}
+
+			if serviceCalled != test.wantServiceCalled {
+				t.Fatalf(
+					"expected service called=%t, got %t",
+					test.wantServiceCalled,
+					serviceCalled,
+				)
+			}
+
+			body := responseRecorder.Body.String()
+
+			if !strings.Contains(
+				body,
+				`"code":"`+test.wantCode+`"`,
+			) {
+				t.Fatalf(
+					"expected error code %q, got: %s",
+					test.wantCode,
+					body,
+				)
+			}
+
+			if !strings.Contains(
+				body,
+				test.wantMessage,
+			) {
+				t.Fatalf(
+					"expected message %q, got: %s",
+					test.wantMessage,
+					body,
+				)
+			}
+
+			if test.forbiddenMessage != "" &&
+				strings.Contains(
+					body,
+					test.forbiddenMessage,
+				) {
+				t.Fatalf(
+					"response leaked internal error: %s",
+					body,
+				)
+			}
+		})
+	}
 }

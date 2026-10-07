@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"job-tracker-api/internal/model"
 )
@@ -129,4 +130,136 @@ func (r *MySQLApplicationRepository) Delete(
 	}
 
 	return nil
+}
+
+func (r *MySQLApplicationRepository) List(
+	ctx context.Context,
+	request model.ListApplicationsRequest,
+) ([]model.Application, int64, error) {
+
+	conditions := make([]string, 0, 2)
+	args := make([]any, 0, 2)
+
+	if request.Status != "" {
+		conditions = append(
+			conditions,
+			"status = ?",
+		)
+
+		args = append(
+			args,
+			request.Status,
+		)
+	}
+
+	if request.Company != "" {
+		conditions = append(
+			conditions,
+			"company LIKE ?",
+		)
+		args = append(
+			args,
+			"%"+request.Company+"%",
+		)
+	}
+
+	whereClause := ""
+
+	if len(conditions) > 0 {
+		whereClause = " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	var total int64
+
+	countQuery :=
+		"SELECT COUNT(*) FROM applications" + whereClause
+
+	err := r.db.QueryRowContext(
+		ctx,
+		countQuery,
+		args...,
+	).Scan(&total)
+	if err != nil {
+		return nil, 0,
+			fmt.Errorf("count applications: %w", err)
+	}
+
+	query := `SELECT
+		id,
+		company,
+		position,
+		status,
+		applied_at,
+		notes,
+		created_at,
+		updated_at
+	FROM applications` +
+		whereClause +
+		` ORDER BY updated_at DESC, id DESC
+		LIMIT ? OFFSET ?`
+
+	offset := (request.Page - 1) * request.PageSize
+
+	queryArgs := append([]any{}, args...)
+
+	queryArgs = append(
+		queryArgs,
+		request.PageSize,
+		offset,
+	)
+
+	rows, err := r.db.QueryContext(
+		ctx,
+		query,
+		queryArgs...,
+	)
+	if err != nil {
+		return nil, 0,
+			fmt.Errorf("list applications: %w", err)
+	}
+	defer rows.Close()
+
+	applications := make(
+		[]model.Application,
+		0,
+	)
+
+	for rows.Next() {
+		var application model.Application
+		var appliedAt sql.NullTime
+
+		err := rows.Scan(
+			&application.ID,
+			&application.Company,
+			&application.Position,
+			&application.Status,
+			&appliedAt,
+			&application.Notes,
+			&application.CreatedAt,
+			&application.UpdatedAt,
+		)
+		if err != nil {
+			return nil, 0,
+				fmt.Errorf("scan application: %w", err)
+		}
+
+		if appliedAt.Valid {
+			value :=
+				appliedAt.Time.Format("2006-01-02")
+			application.AppliedAt = &value
+		}
+
+		applications = append(
+			applications,
+			application,
+		)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0,
+			fmt.Errorf("iterate applications: %w", err)
+	}
+
+	return applications, total, nil
+
 }
