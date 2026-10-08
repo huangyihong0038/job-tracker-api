@@ -445,3 +445,160 @@ func TestMySQLApplicationRepositoryList(t *testing.T) {
 	}
 
 }
+
+func TestMySQLApplicationRepositoryUpdate(t *testing.T) {
+
+	if os.Getenv("MYSQL_DSN") == "" {
+		t.Skip("MYSQL_DSN is not set")
+	}
+
+	ctx := context.Background()
+
+	db, err := config.OpenMySQL(ctx)
+	if err != nil {
+		t.Fatalf("connect to MySQL: %v", err)
+	}
+	defer db.Close()
+
+	repo := NewMySQLApplicationRepository(db)
+
+	appliedAt := "2026-10-08"
+
+	created, err := repo.Create(
+		ctx,
+		model.Application{
+			Company:   "Update Test Company",
+			Position:  "Backend Intern",
+			Status:    "planned",
+			AppliedAt: &appliedAt,
+			Notes:     "original notes",
+		},
+	)
+
+	if err != nil {
+		t.Fatalf("create application: %v", err)
+	}
+
+	defer func() {
+		_, cleanupErr := db.ExecContext(
+			ctx,
+			"DELETE FROM applications WHERE id = ?",
+			created.ID,
+		)
+		if cleanupErr != nil {
+			t.Errorf(
+				"cleanup application %d: %v",
+				created.ID,
+				cleanupErr,
+			)
+		}
+	}()
+
+	newStatus := "interview"
+	newNotes := "updated notes"
+
+	updated, err := repo.Update(
+		ctx,
+		created.ID,
+		model.UpdateApplicationRequest{
+			Status: model.OptionalString{
+				Present: true,
+				Value:   &newStatus,
+			},
+			Notes: model.OptionalString{
+				Present: true,
+				Value:   &newNotes,
+			},
+		},
+	)
+
+	if err != nil {
+		t.Fatalf("update application: %v", err)
+	}
+
+	if updated.Status != newStatus {
+		t.Fatalf(
+			"expected status %q, got %q",
+			newStatus,
+			updated.Status,
+		)
+	}
+
+	if updated.Notes != newNotes {
+		t.Fatalf(
+			"expected notes %q, got %q",
+			newNotes,
+			updated.Notes,
+		)
+	}
+
+	if updated.Company != created.Company {
+		t.Fatalf(
+			"expected company to remain %q, got %q",
+			created.Company,
+			updated.Company,
+		)
+	}
+
+	if updated.Position != created.Position {
+		t.Fatalf(
+			"expected position to remain %q, got %q",
+			created.Position,
+			updated.Position,
+		)
+	}
+
+	if updated.AppliedAt == nil ||
+		*updated.AppliedAt != appliedAt {
+		t.Fatalf(
+			"expected applied_at to remain %q, got %v",
+			appliedAt,
+			updated.AppliedAt,
+		)
+	}
+
+	cleared, err := repo.Update(
+		ctx,
+		created.ID,
+		model.UpdateApplicationRequest{
+			AppliedAt: model.OptionalString{
+				Present: true,
+				Value:   nil,
+			},
+		},
+	)
+
+	if err != nil {
+		t.Fatalf("clear applied_at: %v", err)
+	}
+
+	if cleared.AppliedAt != nil {
+		t.Fatalf(
+			"expected applied_at to be nil, got %q",
+			*cleared.AppliedAt,
+		)
+	}
+
+	if err := repo.Delete(ctx, created.ID); err != nil {
+		t.Fatalf("delete application: %v", err)
+	}
+
+	_, err = repo.Update(
+		ctx,
+		created.ID,
+		model.UpdateApplicationRequest{
+			Status: model.OptionalString{
+				Present: true,
+				Value:   &newStatus,
+			},
+		},
+	)
+
+	if !errors.Is(err, ErrApplicationNotFound) {
+		t.Fatalf(
+			"expected ErrApplicationNotFound, got %v",
+			err,
+		)
+	}
+
+}

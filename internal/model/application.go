@@ -21,6 +21,14 @@ type CreateApplicationRequest struct {
 	Notes     string  `json:"notes"`
 }
 
+type UpdateApplicationRequest struct {
+	Company   OptionalString `json:"company"`
+	Position  OptionalString `json:"position"`
+	Status    OptionalString `json:"status"`
+	AppliedAt OptionalString `json:"applied_at"`
+	Notes     OptionalString `json:"notes"`
+}
+
 type ListApplicationsRequest struct {
 	Page     int    `form:"page"`
 	PageSize int    `form:"page_size"`

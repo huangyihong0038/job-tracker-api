@@ -56,6 +56,11 @@ func main() {
 			"/applications",
 			applicationHandler.List,
 		)
+
+		api.PATCH(
+			"/applications/:id",
+			applicationHandler.Update,
+		)
 	}
 
 	if err := router.Run(":8080"); err != nil {

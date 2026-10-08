@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"job-tracker-api/internal/model"
 )
@@ -57,6 +58,61 @@ func (repository *MemoryApplicationRepository) GetByID(
 	}
 
 	return app, nil
+
+}
+
+func (repository *MemoryApplicationRepository) Update(
+	_ context.Context,
+	id int64,
+	request model.UpdateApplicationRequest,
+) (model.Application, error) {
+
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+
+	application, ok := repository.applications[id]
+
+	if !ok {
+		return model.Application{}, ErrApplicationNotFound
+	}
+
+	if request.Company.Present &&
+		request.Company.Value != nil {
+		application.Company = *request.Company.Value
+	}
+
+	if request.Position.Present &&
+		request.Position.Value != nil {
+		application.Position =
+			*request.Position.Value
+	}
+
+	if request.Status.Present &&
+		request.Status.Value != nil {
+		application.Status =
+			*request.Status.Value
+	}
+
+	if request.AppliedAt.Present {
+		if request.AppliedAt.Value == nil {
+			application.AppliedAt = nil
+		} else {
+			value := *request.AppliedAt.Value
+			application.AppliedAt = &value
+		}
+	}
+
+	if request.Notes.Present &&
+		request.Notes.Value != nil {
+		application.Notes =
+			*request.Notes.Value
+	}
+
+	application.UpdatedAt = time.Now().UTC()
+
+	repository.applications[id] = application
+
+	return application, nil
 
 }
 

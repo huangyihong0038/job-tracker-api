@@ -263,3 +263,118 @@ func (r *MySQLApplicationRepository) List(
 	return applications, total, nil
 
 }
+
+func (r *MySQLApplicationRepository) Update(
+	ctx context.Context,
+	id int64,
+	request model.UpdateApplicationRequest,
+) (model.Application, error) {
+	assignments := make([]string, 0, 5)
+	args := make([]any, 0, 6)
+
+	if request.Company.Present &&
+		request.Company.Value != nil {
+		assignments = append(
+			assignments,
+			"company = ?",
+		)
+		args = append(
+			args,
+			*request.Company.Value,
+		)
+	}
+
+	if request.Position.Present &&
+		request.Position.Value != nil {
+		assignments = append(
+			assignments,
+			"position = ?",
+		)
+		args = append(
+			args,
+			*request.Position.Value,
+		)
+	}
+
+	if request.Status.Present &&
+		request.Status.Value != nil {
+		assignments = append(
+			assignments,
+			"status = ?",
+		)
+		args = append(
+			args,
+			*request.Status.Value,
+		)
+	}
+
+	if request.AppliedAt.Present {
+		assignments = append(
+			assignments,
+			"applied_at = ?",
+		)
+
+		if request.AppliedAt.Value == nil {
+			args = append(args, nil)
+		} else {
+			args = append(
+				args,
+				*request.AppliedAt.Value,
+			)
+		}
+	}
+
+	if request.Notes.Present &&
+		request.Notes.Value != nil {
+		assignments = append(
+			assignments,
+			"notes = ?",
+		)
+		args = append(
+			args,
+			*request.Notes.Value,
+		)
+	}
+
+	if len(assignments) == 0 {
+		return r.GetByID(ctx, id)
+	}
+
+	args = append(args, id)
+
+	query := "UPDATE applications SET " +
+		strings.Join(assignments, ", ") +
+		" WHERE id = ?"
+
+	_, err := r.db.ExecContext(
+		ctx,
+		query,
+		args...,
+	)
+	if err != nil {
+		return model.Application{},
+			fmt.Errorf(
+				"update application: %w",
+				err,
+			)
+	}
+
+	updated, err := r.GetByID(ctx, id)
+	if err != nil {
+		if errors.Is(
+			err,
+			ErrApplicationNotFound,
+		) {
+			return model.Application{},
+				ErrApplicationNotFound
+		}
+
+		return model.Application{},
+			fmt.Errorf(
+				"get updated application: %w",
+				err,
+			)
+	}
+
+	return updated, nil
+}

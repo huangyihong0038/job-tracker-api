@@ -15,6 +15,11 @@ type fakeApplicationRepository struct {
 	listFunc func(
 		model.ListApplicationsRequest,
 	) ([]model.Application, int64, error)
+
+	updateFunc func(
+		int64,
+		model.UpdateApplicationRequest,
+	) (model.Application, error)
 }
 
 func (repository *fakeApplicationRepository) Create(
@@ -30,6 +35,21 @@ func (repository *fakeApplicationRepository) GetByID(
 	_ context.Context,
 	id int64,
 ) (model.Application, error) {
+	return model.Application{}, nil
+}
+
+func (repository *fakeApplicationRepository) Update(
+	_ context.Context,
+	id int64,
+	request model.UpdateApplicationRequest,
+) (model.Application, error) {
+	if repository.updateFunc != nil {
+		return repository.updateFunc(
+			id,
+			request,
+		)
+	}
+
 	return model.Application{}, nil
 }
 
@@ -468,5 +488,422 @@ func TestApplicationServiceListNormalizesNilData(t *testing.T) {
 			"expected empty data, got %+v",
 			response.Data,
 		)
+	}
+}
+
+func TestApplicationServiceUpdate(t *testing.T) {
+	ctx := context.Background()
+
+	company := "  ByteDance  "
+	position := "  Backend Intern  "
+	status := "  INTERVIEW  "
+	appliedAt := "  2026-10-08  "
+	notes := "  一面通过  "
+
+	repository := &fakeApplicationRepository{
+		updateFunc: func(
+			id int64,
+			request model.UpdateApplicationRequest,
+		) (model.Application, error) {
+			if id != 7 {
+				t.Fatalf(
+					"expected ID 7, got %d",
+					id,
+				)
+			}
+
+			if !request.Company.Present ||
+				request.Company.Value == nil ||
+				*request.Company.Value != "ByteDance" {
+				t.Fatalf(
+					"unexpected company: %+v",
+					request.Company,
+				)
+			}
+
+			if !request.Position.Present ||
+				request.Position.Value == nil ||
+				*request.Position.Value != "Backend Intern" {
+				t.Fatalf(
+					"unexpected position: %+v",
+					request.Position,
+				)
+			}
+
+			if !request.Status.Present ||
+				request.Status.Value == nil ||
+				*request.Status.Value != "interview" {
+				t.Fatalf(
+					"unexpected status: %+v",
+					request.Status,
+				)
+			}
+
+			if !request.AppliedAt.Present ||
+				request.AppliedAt.Value == nil ||
+				*request.AppliedAt.Value != "2026-10-08" {
+				t.Fatalf(
+					"unexpected applied_at: %+v",
+					request.AppliedAt,
+				)
+			}
+
+			if !request.Notes.Present ||
+				request.Notes.Value == nil ||
+				*request.Notes.Value != "一面通过" {
+				t.Fatalf(
+					"unexpected notes: %+v",
+					request.Notes,
+				)
+			}
+
+			return model.Application{
+				ID:        id,
+				Company:   *request.Company.Value,
+				Position:  *request.Position.Value,
+				Status:    *request.Status.Value,
+				AppliedAt: request.AppliedAt.Value,
+				Notes:     *request.Notes.Value,
+			}, nil
+		},
+	}
+
+	applicationService :=
+		NewApplicationService(repository)
+
+	updated, err := applicationService.Update(
+		ctx,
+		7,
+		model.UpdateApplicationRequest{
+			Company: model.OptionalString{
+				Present: true,
+				Value:   &company,
+			},
+			Position: model.OptionalString{
+				Present: true,
+				Value:   &position,
+			},
+			Status: model.OptionalString{
+				Present: true,
+				Value:   &status,
+			},
+			AppliedAt: model.OptionalString{
+				Present: true,
+				Value:   &appliedAt,
+			},
+			Notes: model.OptionalString{
+				Present: true,
+				Value:   &notes,
+			},
+		},
+	)
+
+	if err != nil {
+		t.Fatalf(
+			"expected update to succeed, got %v",
+			err,
+		)
+	}
+
+	if updated.ID != 7 {
+		t.Fatalf(
+			"expected ID 7, got %d",
+			updated.ID,
+		)
+	}
+
+	if updated.Company != "ByteDance" {
+		t.Fatalf(
+			"expected normalized company, got %q",
+			updated.Company,
+		)
+	}
+
+	if updated.Status != "interview" {
+		t.Fatalf(
+			"expected normalized status, got %q",
+			updated.Status,
+		)
+	}
+}
+
+func TestApplicationServiceUpdateClearsAppliedAt(
+	t *testing.T,
+) {
+	ctx := context.Background()
+
+	repository := &fakeApplicationRepository{
+		updateFunc: func(
+			id int64,
+			request model.UpdateApplicationRequest,
+		) (model.Application, error) {
+			if !request.AppliedAt.Present {
+				t.Fatal(
+					"expected applied_at to be present",
+				)
+			}
+
+			if request.AppliedAt.Value != nil {
+				t.Fatalf(
+					"expected applied_at value to be nil, got %q",
+					*request.AppliedAt.Value,
+				)
+			}
+
+			return model.Application{
+				ID:        id,
+				Company:   "ByteDance",
+				Position:  "Backend Intern",
+				Status:    "planned",
+				AppliedAt: nil,
+			}, nil
+		},
+	}
+
+	applicationService :=
+		NewApplicationService(repository)
+
+	updated, err := applicationService.Update(
+		ctx,
+		8,
+		model.UpdateApplicationRequest{
+			AppliedAt: model.OptionalString{
+				Present: true,
+				Value:   nil,
+			},
+		},
+	)
+
+	if err != nil {
+		t.Fatalf(
+			"expected update to succeed, got %v",
+			err,
+		)
+	}
+
+	if updated.AppliedAt != nil {
+		t.Fatalf(
+			"expected applied_at to be nil, got %q",
+			*updated.AppliedAt,
+		)
+	}
+
+}
+
+func TestApplicationServiceUpdateValidation(
+	t *testing.T,
+) {
+	optionalString := func(
+		value string,
+	) model.OptionalString {
+		return model.OptionalString{
+			Present: true,
+			Value:   &value,
+		}
+	}
+
+	nullString := model.OptionalString{
+		Present: true,
+		Value:   nil,
+	}
+
+	tests := []struct {
+		name    string
+		request model.UpdateApplicationRequest
+		wantErr error
+	}{
+		{
+			name:    "no fields",
+			request: model.UpdateApplicationRequest{},
+			wantErr: ErrNoFieldsToUpdate,
+		},
+		{
+			name: "company is null",
+			request: model.UpdateApplicationRequest{
+				Company: nullString,
+			},
+			wantErr: ErrCompanyRequired,
+		},
+		{
+			name: "company is blank",
+			request: model.UpdateApplicationRequest{
+				Company: optionalString("   "),
+			},
+			wantErr: ErrCompanyRequired,
+		},
+		{
+			name: "company is too long",
+			request: model.UpdateApplicationRequest{
+				Company: optionalString(
+					strings.Repeat("中", 101),
+				),
+			},
+			wantErr: ErrCompanyTooLong,
+		},
+		{
+			name: "position is null",
+			request: model.UpdateApplicationRequest{
+				Position: nullString,
+			},
+			wantErr: ErrPositionRequired,
+		},
+		{
+			name: "position is blank",
+			request: model.UpdateApplicationRequest{
+				Position: optionalString("   "),
+			},
+			wantErr: ErrPositionRequired,
+		},
+		{
+			name: "position is too long",
+			request: model.UpdateApplicationRequest{
+				Position: optionalString(
+					strings.Repeat("中", 101),
+				),
+			},
+			wantErr: ErrPositionTooLong,
+		},
+		{
+			name: "status is null",
+			request: model.UpdateApplicationRequest{
+				Status: nullString,
+			},
+			wantErr: ErrInvalidStatus,
+		},
+		{
+			name: "status is invalid",
+			request: model.UpdateApplicationRequest{
+				Status: optionalString("unknown"),
+			},
+			wantErr: ErrInvalidStatus,
+		},
+		{
+			name: "applied_at is invalid",
+			request: model.UpdateApplicationRequest{
+				AppliedAt: optionalString(
+					"2026-02-30",
+				),
+			},
+			wantErr: ErrInvalidAppliedAt,
+		},
+		{
+			name: "notes is null",
+			request: model.UpdateApplicationRequest{
+				Notes: nullString,
+			},
+			wantErr: ErrNotesCannotBeNull,
+		},
+		{
+			name: "notes is too long",
+			request: model.UpdateApplicationRequest{
+				Notes: optionalString(
+					strings.Repeat("中", 1001),
+				),
+			},
+			wantErr: ErrNotesTooLong,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repositoryCalled := false
+
+			repository := &fakeApplicationRepository{
+				updateFunc: func(
+					id int64,
+					request model.UpdateApplicationRequest,
+				) (model.Application, error) {
+					repositoryCalled = true
+					return model.Application{}, nil
+				},
+			}
+
+			applicationService :=
+				NewApplicationService(repository)
+
+			_, err := applicationService.Update(
+				context.Background(),
+				1,
+				test.request,
+			)
+
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf(
+					"expected error %v, got %v",
+					test.wantErr,
+					err,
+				)
+			}
+
+			if repositoryCalled {
+				t.Fatal(
+					"repository must not be called when validation fails",
+				)
+			}
+		})
+	}
+}
+
+func TestApplicationServiceUpdateRepositoryErrors(
+	t *testing.T,
+) {
+	databaseError := errors.New(
+		"database connection failed",
+	)
+
+	tests := []struct {
+		name          string
+		repositoryErr error
+		wantErr       error
+	}{
+		{
+			name: "application not found",
+			repositoryErr: repository.
+				ErrApplicationNotFound,
+			wantErr: ErrApplicationNotFound,
+		},
+		{
+			name:          "database error",
+			repositoryErr: databaseError,
+			wantErr:       databaseError,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			status := "interview"
+
+			repository := &fakeApplicationRepository{
+				updateFunc: func(
+					id int64,
+					request model.UpdateApplicationRequest,
+				) (model.Application, error) {
+					return model.Application{},
+						test.repositoryErr
+				},
+			}
+
+			applicationService :=
+				NewApplicationService(repository)
+
+			_, err := applicationService.Update(
+				context.Background(),
+				999,
+				model.UpdateApplicationRequest{
+					Status: model.OptionalString{
+						Present: true,
+						Value:   &status,
+					},
+				},
+			)
+
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf(
+					"expected error %v, got %v",
+					test.wantErr,
+					err,
+				)
+			}
+		})
 	}
 }

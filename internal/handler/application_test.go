@@ -24,6 +24,11 @@ type fakeApplicationService struct {
 	listFunc    func(
 		model.ListApplicationsRequest,
 	) (model.ListApplicationsResponse, error)
+
+	updateFunc func(
+		int64,
+		model.UpdateApplicationRequest,
+	) (model.Application, error)
 }
 
 func (service *fakeApplicationService) Create(
@@ -56,6 +61,17 @@ func (service *fakeApplicationService) GetByID(
 	id int64,
 ) (model.Application, error) {
 	return service.getByIDFunc(id)
+}
+
+func (service *fakeApplicationService) Update(
+	_ context.Context,
+	id int64,
+	request model.UpdateApplicationRequest,
+) (model.Application, error) {
+	if service.updateFunc != nil {
+		return service.updateFunc(id, request)
+	}
+	return model.Application{}, nil
 }
 
 func (service *fakeApplicationService) Delete(
@@ -96,6 +112,11 @@ func newTestRouter(
 		applicationHandler.List,
 	)
 
+	router.PATCH(
+		"/api/v1/applications/:id",
+		applicationHandler.Update,
+	)
+
 	return router
 }
 
@@ -118,6 +139,33 @@ func performCreateRequest(
 	router.ServeHTTP(responseRecorder, request)
 
 	return responseRecorder
+}
+
+func performUpdateRequest(
+	router *gin.Engine,
+	id int64,
+	body string,
+) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/v1/applications/"+
+			strconv.FormatInt(id, 10),
+		bytes.NewBufferString(body),
+	)
+
+	request.Header.Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(
+		response,
+		request,
+	)
+
+	return response
 }
 
 func TestApplicationHandlerCreateSuccess(t *testing.T) {
@@ -934,4 +982,295 @@ func TestApplicationHandlerListErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestApplicationHandlerUpdateSuccess(
+	t *testing.T,
+) {
+	appliedAt := "2026-10-08"
+
+	applicationService := &fakeApplicationService{
+		updateFunc: func(
+			id int64,
+			request model.UpdateApplicationRequest,
+		) (model.Application, error) {
+			if id != 7 {
+				t.Fatalf(
+					"expected ID 7, got %d",
+					id,
+				)
+			}
+
+			if !request.Status.Present {
+				t.Fatal(
+					"expected status to be present",
+				)
+			}
+
+			if request.Status.Value == nil {
+				t.Fatal(
+					"expected status value",
+				)
+			}
+
+			if *request.Status.Value != "interview" {
+				t.Fatalf(
+					"expected status interview, got %q",
+					*request.Status.Value,
+				)
+			}
+
+			if !request.AppliedAt.Present {
+				t.Fatal(
+					"expected applied_at to be present",
+				)
+			}
+
+			if request.AppliedAt.Value != nil {
+				t.Fatalf(
+					"expected applied_at to be nil, got %q",
+					*request.AppliedAt.Value,
+				)
+			}
+
+			return model.Application{
+				ID:        id,
+				Company:   "ByteDance",
+				Position:  "Backend Intern",
+				Status:    "interview",
+				AppliedAt: &appliedAt,
+				Notes:     "一面通过",
+			}, nil
+		},
+	}
+
+	router := newTestRouter(
+		applicationService,
+	)
+
+	response := performUpdateRequest(
+		router,
+		7,
+		`{
+			"status": "interview",
+			"applied_at": null
+		}`,
+	)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf(
+			"expected status %d, got %d; body: %s",
+			http.StatusOK,
+			response.Code,
+			response.Body.String(),
+		)
+	}
+
+	var application model.Application
+
+	if err := json.Unmarshal(
+		response.Body.Bytes(),
+		&application,
+	); err != nil {
+		t.Fatalf(
+			"decode response: %v",
+			err,
+		)
+	}
+
+	if application.ID != 7 {
+		t.Fatalf(
+			"expected ID 7, got %d",
+			application.ID,
+		)
+	}
+
+	if application.Status != "interview" {
+		t.Fatalf(
+			"expected status interview, got %q",
+			application.Status,
+		)
+	}
+
+	if application.Company != "ByteDance" {
+		t.Fatalf(
+			"expected company ByteDance, got %q",
+			application.Company,
+		)
+	}
+}
+
+func TestApplicationHandlerUpdateErrors(
+	t *testing.T,
+) {
+	internalError := errors.New(
+		"database connection failed",
+	)
+
+	tests := []struct {
+		name              string
+		path              string
+		body              string
+		serviceErr        error
+		wantStatus        int
+		wantCode          string
+		wantMessage       string
+		wantServiceCalled bool
+		forbiddenMessage  string
+	}{
+		{
+			name: "invalid ID",
+			path: "/api/v1/applications/" +
+				"abc",
+			body:              `{"status":"interview"}`,
+			wantStatus:        http.StatusBadRequest,
+			wantCode:          "INVALID_ARGUMENT",
+			wantMessage:       "id must be a positive integer",
+			wantServiceCalled: false,
+		},
+		{
+			name: "invalid request body",
+			path: "/api/v1/applications/" +
+				"1",
+			body:              `{"status":`,
+			wantStatus:        http.StatusBadRequest,
+			wantCode:          "INVALID_ARGUMENT",
+			wantMessage:       "request body is invalid",
+			wantServiceCalled: false,
+		},
+		{
+			name: "validation error",
+			path: "/api/v1/applications/" +
+				"1",
+			body:              `{}`,
+			serviceErr:        service.ErrNoFieldsToUpdate,
+			wantStatus:        http.StatusBadRequest,
+			wantCode:          "INVALID_ARGUMENT",
+			wantMessage:       service.ErrNoFieldsToUpdate.Error(),
+			wantServiceCalled: true,
+		},
+		{
+			name: "application not found",
+			path: "/api/v1/applications/" +
+				"999",
+			body:              `{"status":"interview"}`,
+			serviceErr:        service.ErrApplicationNotFound,
+			wantStatus:        http.StatusNotFound,
+			wantCode:          "NOT_FOUND",
+			wantMessage:       "application not found",
+			wantServiceCalled: true,
+		},
+		{
+			name: "internal error",
+			path: "/api/v1/applications/" +
+				"1",
+			body:              `{"status":"interview"}`,
+			serviceErr:        internalError,
+			wantStatus:        http.StatusInternalServerError,
+			wantCode:          "INTERNAL_ERROR",
+			wantMessage:       "internal server error",
+			wantServiceCalled: true,
+			forbiddenMessage:  internalError.Error(),
+		},
+	}
+
+	for _, test := range tests {
+
+		t.Run(test.name, func(t *testing.T) {
+
+			serviceCalled := false
+
+			applicationService :=
+				&fakeApplicationService{
+					updateFunc: func(
+						id int64,
+						request model.UpdateApplicationRequest,
+					) (model.Application, error) {
+						serviceCalled = true
+
+						return model.Application{},
+							test.serviceErr
+					},
+				}
+
+			router := newTestRouter(
+				applicationService,
+			)
+
+			request := httptest.NewRequest(
+				http.MethodPatch,
+				test.path,
+				bytes.NewBufferString(
+					test.body,
+				),
+			)
+
+			request.Header.Set(
+				"Content-Type",
+				"application/json",
+			)
+
+			response := httptest.NewRecorder()
+
+			router.ServeHTTP(
+				response,
+				request,
+			)
+
+			if response.Code != test.wantStatus {
+				t.Fatalf(
+					"expected status %d, got %d; body: %s",
+					test.wantStatus,
+					response.Code,
+					response.Body.String(),
+				)
+			}
+
+			if serviceCalled !=
+				test.wantServiceCalled {
+				t.Fatalf(
+					"expected service called=%t, got %t",
+					test.wantServiceCalled,
+					serviceCalled,
+				)
+			}
+
+			body := response.Body.String()
+
+			if !strings.Contains(
+				body,
+				`"code":"`+test.wantCode+`"`,
+			) {
+				t.Fatalf(
+					"expected error code %q, got: %s",
+					test.wantCode,
+					body,
+				)
+			}
+
+			if !strings.Contains(
+				body,
+				test.wantMessage,
+			) {
+				t.Fatalf(
+					"expected message %q, got: %s",
+					test.wantMessage,
+					body,
+				)
+			}
+			if test.forbiddenMessage != "" &&
+				strings.Contains(
+					body,
+					test.forbiddenMessage,
+				) {
+				t.Fatalf(
+					"response leaked internal error: %s",
+					body,
+				)
+			}
+
+		})
+
+	}
+
 }

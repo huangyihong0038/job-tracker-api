@@ -19,6 +19,11 @@ type ApplicationService interface {
 		context.Context,
 		model.ListApplicationsRequest,
 	) (model.ListApplicationsResponse, error)
+	Update(
+		context.Context,
+		int64,
+		model.UpdateApplicationRequest,
+	) (model.Application, error)
 }
 
 type ApplicationHandler struct {
@@ -163,6 +168,82 @@ func (handler *ApplicationHandler) GetByID(
 
 }
 
+func (handler *ApplicationHandler) Update(
+	c *gin.Context,
+) {
+	id, err := strconv.ParseInt(
+		c.Param("id"),
+		10,
+		64,
+	)
+
+	if err != nil || id <= 0 {
+		writeError(
+			c,
+			http.StatusBadRequest,
+			"INVALID_ARGUMENT",
+			"id must be a positive integer",
+		)
+		return
+	}
+
+	var request model.UpdateApplicationRequest
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		writeError(
+			c,
+			http.StatusBadRequest,
+			"INVALID_ARGUMENT",
+			"request body is invalid",
+		)
+		return
+	}
+
+	application, err := handler.service.Update(
+		c.Request.Context(),
+		id,
+		request,
+	)
+
+	if err != nil {
+		if errors.Is(
+			err,
+			service.ErrApplicationNotFound,
+		) {
+			writeError(
+				c,
+				http.StatusNotFound,
+				"NOT_FOUND",
+				"application not found",
+			)
+			return
+		}
+
+		if isValidationError(err) {
+			writeError(
+				c,
+				http.StatusBadRequest,
+				"INVALID_ARGUMENT",
+				err.Error(),
+			)
+			return
+		}
+		writeError(
+			c,
+			http.StatusInternalServerError,
+			"INTERNAL_ERROR",
+			"internal server error",
+		)
+		return
+	}
+
+	c.JSON(
+		http.StatusOK,
+		application,
+	)
+
+}
+
 func (handler *ApplicationHandler) Delete(
 	c *gin.Context,
 ) {
@@ -218,7 +299,9 @@ func isValidationError(err error) bool {
 		errors.Is(err, service.ErrInvalidAppliedAt) ||
 		errors.Is(err, service.ErrNotesTooLong) ||
 		errors.Is(err, service.ErrInvalidPage) ||
-		errors.Is(err, service.ErrInvalidPageSize)
+		errors.Is(err, service.ErrInvalidPageSize) ||
+		errors.Is(err, service.ErrNoFieldsToUpdate) ||
+		errors.Is(err, service.ErrNotesCannotBeNull)
 
 }
 

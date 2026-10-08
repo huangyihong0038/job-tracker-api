@@ -25,6 +25,12 @@ var (
 	ErrInvalidPageSize = errors.New(
 		"page_size must be between 1 and 100",
 	)
+	ErrNoFieldsToUpdate = errors.New(
+		"at least one field must be provided",
+	)
+	ErrNotesCannotBeNull = errors.New(
+		"notes cannot be null",
+	)
 )
 
 type ApplicationRepository interface {
@@ -35,6 +41,11 @@ type ApplicationRepository interface {
 		context.Context,
 		model.ListApplicationsRequest,
 	) ([]model.Application, int64, error)
+	Update(
+		context.Context,
+		int64,
+		model.UpdateApplicationRequest,
+	) (model.Application, error)
 }
 
 type ApplicationService struct {
@@ -120,6 +131,143 @@ func (service *ApplicationService) Create(
 	}
 
 	return service.repository.Create(ctx, application)
+}
+
+func (service *ApplicationService) Update(
+	ctx context.Context,
+	id int64,
+	request model.UpdateApplicationRequest,
+) (model.Application, error) {
+	hasField :=
+		request.Company.Present ||
+			request.Position.Present ||
+			request.Status.Present ||
+			request.AppliedAt.Present ||
+			request.Notes.Present
+
+	if !hasField {
+		return model.Application{},
+			ErrNoFieldsToUpdate
+	}
+
+	if request.Company.Present {
+		if request.Company.Value == nil {
+			return model.Application{},
+				ErrCompanyRequired
+		}
+		value := strings.TrimSpace(
+			*request.Company.Value,
+		)
+		if value == "" {
+			return model.Application{},
+				ErrCompanyRequired
+		}
+		if utf8.RuneCountInString(value) > 100 {
+			return model.Application{},
+				ErrCompanyTooLong
+		}
+
+		request.Company.Value = &value
+
+	}
+
+	if request.Position.Present {
+		if request.Position.Value == nil {
+			return model.Application{},
+				ErrPositionRequired
+		}
+
+		value := strings.TrimSpace(
+			*request.Position.Value,
+		)
+
+		if value == "" {
+			return model.Application{},
+				ErrPositionRequired
+		}
+
+		if utf8.RuneCountInString(value) > 100 {
+			return model.Application{},
+				ErrPositionTooLong
+		}
+
+		request.Position.Value = &value
+	}
+
+	if request.Status.Present {
+		if request.Status.Value == nil {
+			return model.Application{},
+				ErrInvalidStatus
+		}
+
+		value := strings.ToLower(
+			strings.TrimSpace(
+				*request.Status.Value,
+			),
+		)
+
+		if err := ValidStatus(value); err != nil {
+			return model.Application{},
+				ErrInvalidStatus
+		}
+
+		request.Status.Value = &value
+	}
+
+	if request.AppliedAt.Present &&
+		request.AppliedAt.Value != nil {
+		value := strings.TrimSpace(
+			*request.AppliedAt.Value,
+		)
+
+		if _, err := time.Parse(
+			"2006-01-02",
+			value,
+		); err != nil {
+			return model.Application{},
+				ErrInvalidAppliedAt
+		}
+
+		request.AppliedAt.Value = &value
+	}
+
+	if request.Notes.Present {
+		if request.Notes.Value == nil {
+			return model.Application{},
+				ErrNotesCannotBeNull
+		}
+
+		value := strings.TrimSpace(
+			*request.Notes.Value,
+		)
+
+		if utf8.RuneCountInString(value) > 1000 {
+			return model.Application{},
+				ErrNotesTooLong
+		}
+
+		request.Notes.Value = &value
+	}
+
+	application, err := service.repository.Update(
+		ctx,
+		id,
+		request,
+	)
+	if err != nil {
+		if errors.Is(
+			err,
+			repository.ErrApplicationNotFound,
+		) {
+			return model.Application{},
+				ErrApplicationNotFound
+		}
+
+		return model.Application{}, err
+	}
+
+	return application, nil
+
 }
 
 func (service *ApplicationService) List(
