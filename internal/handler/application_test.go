@@ -92,6 +92,16 @@ func newTestRouter(
 
 	router := gin.New()
 
+	router.HandleMethodNotAllowed = true
+
+	router.NoRoute(
+		NotFound,
+	)
+
+	router.NoMethod(
+		MethodNotAllowed,
+	)
+
 	router.POST(
 		"/api/v1/applications",
 		applicationHandler.Create,
@@ -1273,4 +1283,86 @@ func TestApplicationHandlerUpdateErrors(
 
 	}
 
+}
+
+func TestRouterErrors(t *testing.T) {
+	tests := []struct {
+		name        string
+		method      string
+		path        string
+		wantStatus  int
+		wantCode    string
+		wantMessage string
+	}{
+		{
+			name:        "route not found",
+			method:      http.MethodGet,
+			path:        "/api/v1/missing",
+			wantStatus:  http.StatusNotFound,
+			wantCode:    "NOT_FOUND",
+			wantMessage: "route not found",
+		},
+		{
+			name:        "method not allowed",
+			method:      http.MethodPut,
+			path:        "/api/v1/applications/1",
+			wantStatus:  http.StatusMethodNotAllowed,
+			wantCode:    "METHOD_NOT_ALLOWED",
+			wantMessage: "method not allowed",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			router := newTestRouter(
+				&fakeApplicationService{},
+			)
+
+			request := httptest.NewRequest(
+				test.method,
+				test.path,
+				nil,
+			)
+
+			response := httptest.NewRecorder()
+
+			router.ServeHTTP(
+				response,
+				request,
+			)
+
+			if response.Code != test.wantStatus {
+				t.Fatalf(
+					"expected status %d, got %d; body: %s",
+					test.wantStatus,
+					response.Code,
+					response.Body.String(),
+				)
+			}
+
+			body := response.Body.String()
+
+			if !strings.Contains(
+				body,
+				`"code":"`+test.wantCode+`"`,
+			) {
+				t.Fatalf(
+					"expected code %q, got %s",
+					test.wantCode,
+					body,
+				)
+			}
+
+			if !strings.Contains(
+				body,
+				test.wantMessage,
+			) {
+				t.Fatalf(
+					"expected message %q, got %s",
+					test.wantMessage,
+					body,
+				)
+			}
+		})
+	}
 }
